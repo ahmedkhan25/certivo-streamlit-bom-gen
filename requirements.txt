@@ -1,0 +1,6 @@
+flask
+requests
+fpdf
+python-dotenv
+flasgger
+gunicorn
