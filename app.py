@@ -1,9 +1,4 @@
-#hosted on pythonanywhere.com
-#user accout: ahmed25
-#email: ahmed@certivo.com
-#password: b%VFF(*^qzwN$7r
-
-from flask import Flask, request, send_file, jsonify
+import streamlit as st
 import os
 import json
 import io
@@ -15,13 +10,10 @@ from anthropic import APIError
 
 load_dotenv()  # Load environment variables from .env file
 
-app = Flask(__name__)
-
 # Load your actual Anthropic API key from environment variables
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 def call_anthropic_api(prompt):
-    print(f"Calling Anthropic API with prompt: {prompt[:50]}...")  # Debug print
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     try:
         message = client.messages.create(
@@ -31,27 +23,22 @@ def call_anthropic_api(prompt):
                 {"role": "user", "content": prompt}
             ]
         )
-        print("API call successful")  # Debug print
-        return message.content[0].text
+        return message.content[0].text, message.usage
     except APIError as e:
-        print(f"API Error: {e}")
-        print(f"Error details: {e.response.json()}")
+        st.error(f"API Error: {e}")
         raise
     except Exception as e:
-        print(f"Unexpected error in API call: {e}")
+        st.error(f"Unexpected error in API call: {e}")
         raise
 
 def generate_csv_from_response(response_text):
-    print("Generating CSV from response")  # Debug print
     csv_buffer = io.StringIO(response_text)
     csv_file = io.BytesIO()
     csv_file.write(csv_buffer.getvalue().encode('utf-8'))
     csv_file.seek(0)
-    print("CSV generation complete")  # Debug print
     return csv_file
 
 def generate_pdf_from_response(response_text):
-    print("Generating PDF from response")  # Debug print
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -59,40 +46,71 @@ def generate_pdf_from_response(response_text):
     for line in lines:
         pdf.cell(200, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
     pdf_content = pdf.output(dest='S').encode('latin-1')
-    print("PDF generation complete")  # Debug print
     return pdf_content
 
 def get_parts_from_bom(bom_response):
-    print("Extracting parts from BOM")  # Debug print
     try:
         parts = json.loads(bom_response)
-        print(f"Extracted {len(parts)} parts from BOM")  # Debug print
-        if len(parts) > 0:
-            print(f"First few parts: {parts[:5]}")  # Debug print
-        else:
-            print("No parts extracted from BOM")
         return parts
     except json.JSONDecodeError as e:
-        print(f"Error decoding JSON: {str(e)}")
+        st.error(f"Error decoding JSON: {str(e)}")
         return []
 
-@app.route('/generate', methods=['POST'])
-def generate():
-    try:
-        print("Starting generate function")  # Debug print
-        data = request.get_json()
-        industry = data.get('industry')
-        product_type = data.get('type_of_product')
-        number_of_parts = data.get('number_of_parts')
-        number_of_nested_parts = data.get('number_of_nested_parts')
+# Streamlit app
+st.set_page_config(page_title="BOM Generator", page_icon="📋")
 
-        # Input validation
-        if not all([industry, product_type, number_of_parts, number_of_nested_parts]):
-            print("Input validation failed")  # Debug print
-            return jsonify({'error': 'All input fields are required.'}), 400
+# Add logo
+st.image("https://framerusercontent.com/images/JrOd61Z55WJibdnT1hT9QZ0Zk6U.png", width=200)  # Replace with your actual logo URL
 
-        print("Step A: Generating BOM")  # Debug print
-        bom_example = """BOM Part Number,SONY-WH-1000XM5,,,,,,,,,,,,,,,,,,,,
+st.title("BOM Generator")
+
+st.markdown("""
+This tool generates the following files:
+1. Bill of Materials (BOM) in CSV format
+2. Material Specification Sheet in PDF format
+3. Product Compliance Certificates for each part in PDF format
+4. Approved Vendor List in PDF format
+
+All files are packaged into a single ZIP file for easy download.
+""")
+
+# User inputs with examples
+industry = st.selectbox("Industry", 
+    ["Electronics", "Automotive", "Medical Devices", "Consumer Goods", "Textiles", "Chemicals"],
+    help="Select the industry for your product")
+
+product_examples = {
+    "Electronics": "Smartwatch",
+    "Automotive": "Electric Scooter",
+    "Medical Devices": "Digital Thermometer",
+    "Consumer Goods": "Toy Car",
+    "Textiles": "Baseball Cap",
+    "Chemicals": "Plastic Water Bottle"
+}
+
+product_type = st.text_input("Type of Product", 
+    placeholder=f"E.g., {product_examples.get(industry, 'Smartwatch')}",
+    help="Enter the specific type of product you're creating a BOM for")
+
+number_of_parts = st.number_input("Number of Parts", min_value=1, max_value=25, value=5,
+    help="Enter the number of top-level parts in your BOM (max 25)")
+
+number_of_nested_parts = st.number_input("Number of Nested Parts", min_value=0, max_value=3, value=1,
+    help="Enter the number of nested levels (max 3). This represents subproducts within your main product.")
+
+if st.button("Generate BOM and Documents"):
+    if not all([industry, product_type, number_of_parts, number_of_nested_parts]):
+        st.error("All input fields are required.")
+        st.stop()
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    # Step A: Generating BOM
+    status_text.text("Generating BOM...")
+    bom_example = """BOM Part Number,SONY-WH-1000XM5,,,,,,,,,,,,,,,,,,,,
 BOM Name,Sony WH-1000XM5 Wireless Noise-Canceling Headphones Manufacturing BOM,,,,,,,,,,,,,,,,,,,,
 Date,15 Sep 2024; 10:30:15 GMT,,,,,,,,,,,,,,,,,,,,
 Last update by user,productmanager@sony.com,,,,,,,,,,,,,,,,,,,,
@@ -103,7 +121,7 @@ Part Number,Thumbnail image,Quantity,Total Cost,Vendor,Description,Cost,Quantity
 HP-DRIVER-40,,2,$ 30.00,Sony Audio,40mm Dynamic Driver,$ 15.00,500,Each,$ 7500.00,1/5/2024 9:00:00 AM,15/9/2024 10:30:15 AM,HP-DRIVER-40.pdf,HP-DRIVER-40.SLDPRT,engineeringlead,Default,HP-DRIVER-40.SLDPRT,HP-DRIVER-40.SLDPRT,Part,HP-DRIVER-40.SLDPRT.2D.pdf,Neodymium/Aluminum,RoHS compliant
 HP-BT-CHIP,,1,$ 20.00,Qualcomm,Bluetooth 5.2 Chip,$ 20.00,1000,Each,$ 20000.00,1/6/2024 10:30:00 AM,15/9/2024 10:30:15 AM,HP-BT-CHIP.pdf,HP-BT-CHIP.SLDPRT,engineeringlead,Default,HP-BT-CHIP.SLDPRT,HP-BT-CHIP.SLDPRT,Part,HP-BT-CHIP.SLDPRT.2D.pdf,Silicon,RoHS compliant; REACH status pending"""
 
-        bom_prompt = f"""Generate a CSV file for a Bill of Materials (BOM) for an {industry} product of type '{product_type}', with {number_of_parts} parts and {number_of_nested_parts} nested parts. Use the following example as a reference for the format:
+    bom_prompt = f"""Generate a CSV file for a Bill of Materials (BOM) for an {industry} product of type '{product_type}', with {number_of_parts} parts and {number_of_nested_parts} nested parts. Use the following example as a reference for the format:
 
 {bom_example}
 
@@ -124,19 +142,22 @@ JSON:
 
 Only provide the CSV content and JSON array as specified, no additional explanation."""
 
-        bom_response = call_anthropic_api(bom_prompt)
-        
-        # Split the response into CSV and JSON parts
-        csv_content, json_content = bom_response.split('JSON:', 1)
-        csv_content = csv_content.replace('CSV:', '').strip()
-        json_content = json_content.strip()
+    bom_response, bom_usage = call_anthropic_api(bom_prompt)
+    total_input_tokens += bom_usage.input_tokens
+    total_output_tokens += bom_usage.output_tokens
+    
+    # Split the response into CSV and JSON parts
+    csv_content, json_content = bom_response.split('JSON:', 1)
+    csv_content = csv_content.replace('CSV:', '').strip()
+    json_content = json_content.strip()
 
-        bom_csv = generate_csv_from_response(csv_content)
-        parts = get_parts_from_bom(json_content)
-        print("BOM generation complete")  # Debug print
+    bom_csv = generate_csv_from_response(csv_content)
+    parts = get_parts_from_bom(json_content)
+    progress_bar.progress(25)
 
-        print("Step B: Generating Material Specification Sheet")  # Debug print
-        compliance_prompt = f"""Using the following BOM data:
+    # Step B: Generating Material Specification Sheet
+    status_text.text("Generating Material Specification Sheet...")
+    compliance_prompt = f"""Using the following BOM data:
 
 {csv_content}
 
@@ -148,19 +169,21 @@ Create a hypothetical material specification sheet for the {product_type} in the
 5. Reference the vendors or manufacturers from the BOM where appropriate.
 Provide only the content of the material specification sheet, no additional commentary."""
 
-        compliance_response = call_anthropic_api(compliance_prompt)
-        compliance_pdf = generate_pdf_from_response(compliance_response)
-        print("Material Specification Sheet generation complete")  # Debug print
+    compliance_response, compliance_usage = call_anthropic_api(compliance_prompt)
+    total_input_tokens += compliance_usage.input_tokens
+    total_output_tokens += compliance_usage.output_tokens
+    compliance_pdf = generate_pdf_from_response(compliance_response)
+    progress_bar.progress(50)
 
-        print("Step C: Generating Product Compliance Certificates")  # Debug print
-        
-        if not parts:
-            raise ValueError("No parts extracted from BOM")
-        
-        certs = []
-        for part in parts:
-            print(f"Generating certificate for part: {part['part_number']}")  # Debug print
-            cert_prompt = f"""Using the following BOM data:
+    # Step C: Generating Product Compliance Certificates
+    status_text.text("Generating Product Compliance Certificates...")
+    if not parts:
+        st.error("No parts extracted from BOM")
+        st.stop()
+
+    certs = []
+    for i, part in enumerate(parts):
+        cert_prompt = f"""Using the following BOM data:
 
 {csv_content}
 
@@ -173,13 +196,16 @@ Create a product compliance certificate for part number '{part['part_number']}' 
 6. Authorized signatory
 Provide only the certificate content, no additional explanation."""
 
-            cert_response = call_anthropic_api(cert_prompt)
-            cert_pdf = generate_pdf_from_response(cert_response)
-            certs.append({'filename': f"Compliance_Cert_{part['part_number']}.pdf", 'file': cert_pdf})
-        print("Product Compliance Certificates generation complete")  # Debug print
+        cert_response, cert_usage = call_anthropic_api(cert_prompt)
+        total_input_tokens += cert_usage.input_tokens
+        total_output_tokens += cert_usage.output_tokens
+        cert_pdf = generate_pdf_from_response(cert_response)
+        certs.append({'filename': f"Compliance_Cert_{part['part_number']}.pdf", 'file': cert_pdf})
+        progress_bar.progress(50 + (i + 1) * 25 // len(parts))
 
-        print("Step D: Generating Approved Vendor List")  # Debug print
-        vendors_prompt = f"""Using the following BOM data:
+    # Step D: Generating Approved Vendor List
+    status_text.text("Generating Approved Vendor List...")
+    vendors_prompt = f"""Using the following BOM data:
 
 {csv_content}
 
@@ -192,38 +218,35 @@ Create an approved vendor list based on the vendors mentioned in the BOM for the
 6. Parts supplied (list the specific parts from the BOM that this vendor supplies)
 Provide only the vendor list content in a clear, organized format. Do not include any additional commentary or explanations."""
 
-        vendors_response = call_anthropic_api(vendors_prompt)
-        vendors_pdf = generate_pdf_from_response(vendors_response)
-        print("Approved Vendor List generation complete")  # Debug print
+    vendors_response, vendors_usage = call_anthropic_api(vendors_prompt)
+    total_input_tokens += vendors_usage.input_tokens
+    total_output_tokens += vendors_usage.output_tokens
+    vendors_pdf = generate_pdf_from_response(vendors_response)
+    progress_bar.progress(100)
 
-        print("Creating ZIP archive")  # Debug print
-        zip_buffer = io.BytesIO()
-        with ZipFile(zip_buffer, 'w') as zip_file:
-            print("Adding BOM to ZIP")  # Debug print
-            zip_file.writestr('BOM.csv', bom_csv.getvalue())
-            print("Adding Material Specification Sheet to ZIP")  # Debug print
-            zip_file.writestr('Material_Specification_Sheet.pdf', compliance_pdf)
-            print("Adding Approved Vendors to ZIP")  # Debug print
-            zip_file.writestr('Approved_Vendors.pdf', vendors_pdf)
-            for cert in certs:
-                print(f"Adding certificate for {cert['filename']} to ZIP")  # Debug print
-                zip_file.writestr(cert['filename'], cert['file'])
-        zip_buffer.seek(0)
-        print("ZIP archive creation complete")  # Debug print
+    # Create ZIP file
+    status_text.text("Creating ZIP file...")
+    zip_buffer = io.BytesIO()
+    with ZipFile(zip_buffer, 'w') as zip_file:
+        zip_file.writestr('BOM.csv', bom_csv.getvalue())
+        zip_file.writestr('Material_Specification_Sheet.pdf', compliance_pdf)
+        zip_file.writestr('Approved_Vendors.pdf', vendors_pdf)
+        for cert in certs:
+            zip_file.writestr(cert['filename'], cert['file'])
+    zip_buffer.seek(0)
 
-        print("Sending file")  # Debug print
-        return send_file(
-            zip_buffer,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name='output_files.zip'
-        )
+    # Offer ZIP file for download
+    st.download_button(
+        label="Download ZIP file",
+        data=zip_buffer,
+        file_name="output_files.zip",
+        mime="application/zip"
+    )
 
-    except Exception as e:
-        print(f"Error in generate function: {str(e)}")  # Debug print
-        import traceback
-        traceback.print_exc()  # Print full traceback
-        return jsonify({'error': str(e)}), 500
+    status_text.text("Generation complete!")
+    st.success(f"Total tokens used: Input: {total_input_tokens}, Output: {total_output_tokens}")
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
+
+if __name__ == "__main__":
+    st.write("BOM Generator is ready to use.")
