@@ -13,7 +13,7 @@ from anthropic import APIError
 load_dotenv()  # Load environment variables from .env file
 
 # Load your actual Anthropic API key from environment variables
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+ANTHROPIC_API_KEY = st.secrets['ANTHROPIC_API_KEY'] 
 
 def call_anthropic_api(prompt):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
