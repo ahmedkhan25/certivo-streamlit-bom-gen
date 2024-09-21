@@ -1,3 +1,5 @@
+## streamlit app to generate BOM and documents for a product using Anthropic API
+
 import streamlit as st
 import os
 import json
