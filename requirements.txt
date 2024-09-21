@@ -2,7 +2,5 @@ streamlit
 requests
 fpdf
 python-dotenv
-flasgger
-gunicorn
 anthropic
-
+gunicorn
