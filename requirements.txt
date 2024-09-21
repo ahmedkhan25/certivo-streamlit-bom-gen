@@ -4,3 +4,5 @@ fpdf
 python-dotenv
 flasgger
 gunicorn
+anthropic
+
